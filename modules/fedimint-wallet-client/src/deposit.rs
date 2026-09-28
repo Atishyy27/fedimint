@@ -14,7 +14,6 @@ use fedimint_core::module::registry::ModuleDecoderRegistry;
 use fedimint_core::module::{Amounts, ModuleConsensusVersion};
 use fedimint_core::secp256k1::Keypair;
 use fedimint_core::task::sleep;
-use fedimint_core::txoproof::TxOutProof;
 use fedimint_core::util::FmtCompact as _;
 use fedimint_core::{OutPoint, TransactionId};
 use fedimint_logging::LOG_CLIENT_MODULE_WALLET;
@@ -204,7 +203,7 @@ async fn await_btc_transaction_confirmed(
     context: WalletClientContext,
     global_context: DynGlobalClientContext,
     waiting_state: WaitingForConfirmationsDepositState,
-) -> (TxOutProof, ModuleConsensusVersion) {
+) -> (PegInProof, ModuleConsensusVersion) {
     loop {
         // TODO: make everything subscriptions
         // Wait for confirmation
@@ -267,6 +266,33 @@ async fn await_btc_transaction_confirmed(
 
         debug!(proof_block_hash = ?txout_proof.block_header.block_hash(), "Generated merkle proof");
 
+        // Built here rather than in the transition below, because this loop is
+        // the only place that can do anything about a bad answer.
+        // `PegInProof::new` rejects a proof that does not cover this
+        // deposit, which a backend can return without anyone forging anything,
+        // and the backend is federation suggested by default. Retrying is
+        // right: the same request can answer correctly later, after a
+        // reorg settles or a backend catches up.
+        let pegin_proof = match PegInProof::new(
+            txout_proof,
+            waiting_state.btc_transaction.clone(),
+            waiting_state.out_idx,
+            waiting_state.tweak_key.public_key(),
+        ) {
+            Ok(pegin_proof) => pegin_proof,
+            Err(e) => {
+                warn!(
+                    target: LOG_CLIENT_MODULE_WALLET,
+                    error = %e.fmt_compact(),
+                    txid = %waiting_state.btc_transaction.compute_txid(),
+                    out_idx = %waiting_state.out_idx,
+                    "Bitcoin backend returned a proof that does not cover this deposit"
+                );
+                sleep(TRANSACTION_STATUS_FETCH_INTERVAL).await;
+                continue;
+            }
+        };
+
         let consensus_version = match global_context.module_api().module_consensus_version().await {
             Ok(version) => version,
             Err(e) => {
@@ -276,7 +302,7 @@ async fn await_btc_transaction_confirmed(
             }
         };
 
-        return (txout_proof, consensus_version);
+        return (pegin_proof, consensus_version);
     }
 }
 
@@ -284,20 +310,12 @@ pub(crate) async fn transition_btc_tx_confirmed(
     dbtx: &mut ClientSMDatabaseTransaction<'_, '_>,
     global_context: DynGlobalClientContext,
     old_state: DepositStateMachine,
-    (txout_proof, consensus_version): (TxOutProof, ModuleConsensusVersion),
+    (pegin_proof, consensus_version): (PegInProof, ModuleConsensusVersion),
 ) -> DepositStateMachine {
     let DepositStates::WaitingForConfirmations(awaiting_confirmation_state) = old_state.state
     else {
         panic!("Invalid previous state")
     };
-
-    let pegin_proof = PegInProof::new(
-        txout_proof,
-        awaiting_confirmation_state.btc_transaction.clone(),
-        awaiting_confirmation_state.out_idx,
-        awaiting_confirmation_state.tweak_key.public_key(),
-    )
-    .expect("TODO: handle API returning faulty proofs");
 
     let amount = Amounts::new_bitcoin(pegin_proof.tx_output().value.into());
 
