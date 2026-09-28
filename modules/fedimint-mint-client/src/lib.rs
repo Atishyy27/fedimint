@@ -448,7 +448,19 @@ impl Decodable for OOBNotes {
             return Err(DecodeError::from_str("Invite didn't contain API endpoints"));
         }
 
-        Ok(OOBNotes(inner))
+        let oob_notes = OOBNotes(inner);
+
+        // The tiers here are whatever the sender encoded, and they are read
+        // before any of it is checked against a federation's tier keys, so a
+        // sender can name tiers whose total does not fit in `u64` msats.
+        // Reject those here: every reader downstream totals a decoded set.
+        if oob_notes.notes().checked_total_amount().is_none() {
+            return Err(DecodeError::from_str(
+                "E-cash notes in OOBNotes data total more than u64::MAX msats",
+            ));
+        }
+
+        Ok(oob_notes)
     }
 }
 
@@ -3597,6 +3609,33 @@ mod tests {
         let res = oob_notes_string.parse::<OOBNotes>();
 
         assert!(res.is_err(), "An empty OOB notes string should not parse");
+    }
+
+    #[test]
+    fn decoding_oob_notes_that_cannot_be_totalled_fails() {
+        let note = SpendableNote::consensus_decode_hex(
+            "a5dd3ebacad1bc48bd8718eed5a8da1d68f91323bef2848ac4fa2e6f8eed710f3178fd4aef047cc234e6b1127086f33cc408b39818781d9521475360de6b205f3328e490a6d99d5e2553a4553207c8bd",
+            &ModuleRegistry::default(),
+        )
+        .unwrap();
+
+        // Two notes in one tier, at a tier no federation issues. The sender
+        // picks what goes in here, and none of it has been checked against a
+        // federation's tier keys yet, so the total may not fit in `u64` msats.
+        let notes = vec![
+            (Amount::from_msats(1u64 << 63), note.clone()),
+            (Amount::from_msats(1u64 << 63), note),
+        ]
+        .into_iter()
+        .collect::<TieredMulti<_>>();
+        assert_eq!(notes.checked_total_amount(), None);
+
+        let oob_notes_string = OOBNotes::new(FederationId::dummy().to_prefix(), notes).to_string();
+
+        assert_matches!(
+            oob_notes_string.parse::<OOBNotes>(),
+            Err(OOBNotesParseError::Decode(..))
+        );
     }
 
     fn test_roundtrip_serialize_str<T, F>(data: T, assertions: F)

@@ -11,9 +11,9 @@ use crate::{Amount, Tiered};
 /// Represents notes of different denominations.
 ///
 /// **Attention:** care has to be taken when constructing this to avoid overflow
-/// when calculating the total amount represented. As it is prudent to limit
-/// both the maximum note amount and maximum note count per transaction this
-/// shouldn't be a problem in practice though.
+/// when calculating the total amount represented. [`Self::total_amount`] panics
+/// rather than wrapping in that case, and [`Self::checked_total_amount`] is the
+/// variant to use on a note set whose tiers have not been checked yet.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct TieredMulti<T>(Tiered<Vec<T>>);
 
@@ -51,13 +51,29 @@ impl<T> TieredMulti<T> {
     }
 
     /// Returns the total value of all notes in msat as `Amount`
+    ///
+    /// # Panics
+    ///
+    /// If the tiers and their note counts total more than `u64::MAX` msats.
+    /// Use [`Self::checked_total_amount`] wherever the tiers are not known to
+    /// be a federation's own, such as on a set that was just decoded.
     pub fn total_amount(&self) -> Amount {
-        let milli_sat = self
-            .0
+        self.checked_total_amount()
+            .expect("notes total amount overflow")
+    }
+
+    /// Returns the total value of all notes in msat, or `None` if the tiers and
+    /// their note counts total more than `u64::MAX` msats.
+    ///
+    /// Use this rather than [`Self::total_amount`] on a set whose tiers have
+    /// not been validated against a federation's yet: nothing in the encoding
+    /// stops a sender from naming tiers that cannot be summed.
+    pub fn checked_total_amount(&self) -> Option<Amount> {
+        self.0
             .iter()
-            .map(|(tier, notes)| tier.msats * (notes.len() as u64))
-            .sum();
-        Amount::from_msats(milli_sat)
+            .try_fold(Amount::ZERO, |total, (tier, notes)| {
+                total.checked_add(tier.checked_mul(notes.len() as u64)?)
+            })
     }
 
     /// Returns the number of items in all vectors
@@ -214,8 +230,23 @@ impl TieredCounts {
         self.0.iter().map(|(k, v)| (k, *v))
     }
 
+    /// # Panics
+    ///
+    /// If the tiers and their counts total more than `u64::MAX` msats, as with
+    /// [`TieredMulti::total_amount`].
     pub fn total_amount(&self) -> Amount {
-        self.0.iter().map(|(k, v)| k * (*v as u64)).sum::<Amount>()
+        self.checked_total_amount()
+            .expect("note counts total amount overflow")
+    }
+
+    /// Returns the total value of the counted notes, or `None` if the tiers and
+    /// their counts total more than `u64::MAX` msats.
+    pub fn checked_total_amount(&self) -> Option<Amount> {
+        self.0
+            .iter()
+            .try_fold(Amount::ZERO, |total, (tier, count)| {
+                total.checked_add(tier.checked_mul(*count as u64)?)
+            })
     }
 
     pub fn count_items(&self) -> usize {
