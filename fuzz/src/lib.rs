@@ -92,3 +92,22 @@ where
         }
     }
 }
+
+/// Decodes a `TieredMulti` and totals it.
+///
+/// `test_decodable` checks that a decoded value re-encodes to the same bytes,
+/// which is the right invariant for a wire format but says nothing about the
+/// value being arithmetically sound. `TieredMulti::total_amount` multiplies each
+/// tier by its note count and sums the products, and the tiers are whatever was
+/// on the wire, so a decoded set can total past `u64` msats.
+pub fn test_total_amount<C>(data: &[u8])
+where
+    C: Decodable + Encodable + 'static,
+{
+    if let Ok(notes) = fedimint_core::TieredMulti::<C>::consensus_decode_partial(
+        &mut &data[..],
+        &ModuleRegistry::default(),
+    ) {
+        let _ = notes.total_amount();
+    }
+}

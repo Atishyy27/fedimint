@@ -12,6 +12,10 @@ version = { workspace = true }
 cargo-fuzz = true
 
 [[bin]]
+name = "tiered_multi_total"
+path = "src/bin/tiered_multi_total.rs"
+
+[[bin]]
 name = "vec"
 path = "src/bin/vec.rs"
 
