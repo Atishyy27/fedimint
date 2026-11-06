@@ -1,0 +1,16 @@
+name: connectors-check
+on:
+  push:
+    branches: [ci-8573]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p fedimint-connectors --all-features
+      - run: cargo clippy -p fedimint-connectors --all-targets -- -D warnings
