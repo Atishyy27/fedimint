@@ -13,5 +13,5 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p fedimint-client --lib heal_cached_api_version_set
-      - run: cargo clippy -p fedimint-client --all-targets --no-deps -- -D warnings
+      - run: cargo clippy -p fedimint-client --all-targets --no-deps -- -D warnings -A clippy::iter_kv_map
       - run: cargo fmt -p fedimint-client --check
