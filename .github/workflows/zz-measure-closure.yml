@@ -1,0 +1,24 @@
+name: measure release closure sizes
+on:
+  push:
+    branches: [ci-9005-measure]
+  workflow_dispatch:
+permissions: {}
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: cachix/cachix-action@v15
+        with:
+          name: fedimint
+      - name: path-info
+        run: |
+          for bin in fedimintd fedimint-cli fedimint-dbtool fedimint-recoverytool gateway-cli gatewayd devimint; do
+            nix build -L --no-link .#$bin
+            json=$(nix path-info -S --json .#$bin)
+            echo "$bin $json"
+            closure_size=$(echo "$json" | nix run nixpkgs#jq -- -r 'if type == "array" then .[0] else (to_entries[0].value) end | .closureSize // empty')
+            echo "RESULT $bin closureSize=$closure_size over300MB=$([ 300000000 -lt "$closure_size" ] && echo yes || echo no)"
+          done
