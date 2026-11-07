@@ -1,0 +1,17 @@
+name: client-check
+on:
+  push:
+    branches: [ci-9105]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p fedimint-client --lib heal_cached_api_version_set
+      - run: cargo clippy -p fedimint-client --all-targets --no-deps -- -D warnings
+      - run: cargo fmt -p fedimint-client --check
